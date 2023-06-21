@@ -11,50 +11,51 @@ def chunks(list_, n):
 		yield list_[i:i + n]
 
 def to_code(c):
-	i = (ord(c.upper()) - ORD_A)
-	return i if 0 <= i <= 25 else punct_codes[c]
+	x = ord(c.upper()) - ORD_A
+	return x if 0 <= x <= 25 else punct_codes[c]
 
 def to_code_list(s, start=0):
 	return [to_code(c) + start for c in s]
 
-def to_char(i):
-	return chr(i + ORD_A) if i < 26 else PUNCT[i - 26]
+def to_char(x):
+	return chr(x + ORD_A) if x < 26 else PUNCT[x - 26]
 
-def apply_enc(i, h, v, b):
-	return ((b * i + h) * v) % 29
+def apply_enc(x, h, v, b):
+	return ((b * x + h) * v) % 29
 
-def apply_dec(i, h, v, b):
-	return ((MULT_INV[v] * i - h) * MULT_INV[b]) % 29
+def apply_dec(x, h, v, b):
+	return ((MULT_INV[v] * x - h) * MULT_INV[b]) % 29
 
 
-def stream(code, horiz, vert, func):
+def stream(code, horiz, vert, mode):
 	for block_num, chunk in enumerate(chunks(code, len(horiz) * len(vert))):
 		for i, (v, h) in zip(chunk, itertools.product(vert, horiz)):
-			yield func(i, h, v, block_num % 28 + 1)
+			yield mode(i, h, v, block_num % 28 + 1)
 
 
-# TODO: mode enum?
-def greenwall(message, key_horiz, key_vert, encrypt=True):
+def greenwall(message, key_horiz, key_vert, mode):
 	horiz = to_code_list(key_horiz)
 	vert = to_code_list(key_vert, 1)
 	code = to_code_list(message)	
-	func = apply_enc if encrypt else apply_dec
-	result = ''.join(to_char(i) for i in stream(code, horiz, vert, func))
-	if not encrypt:
-		result = result.lower()
+	result = ''.join(to_char(i) for i in stream(code, horiz, vert, mode))
 	return result
 
 
-def probe_text(s):
-	for c in s:
-		if c.isalpha():
-			return c.islower()
-	# default to encrypt
-	return True
+def encrypt(message, key_horiz, key_vert):
+	return greenwall(message, key_horiz, key_vert, apply_enc)
+
+def decrypt(message, key_horiz, key_vert):
+	return greenwall(message, key_horiz, key_vert, apply_dec).lower()
 
 
 if __name__ == '__main__':
 	import argparse
+	
+	def probe_text(s):
+		for c in s:
+			if c.isalpha():
+				return c.islower()
+		return True
 	
 	parser = argparse.ArgumentParser(
 		prog='greenwall',
@@ -62,13 +63,13 @@ if __name__ == '__main__':
 		epilog='Algorithm by Max Koren and Oliver Hammond.')
 	input_group = parser.add_mutually_exclusive_group(required=True)
 	input_group.add_argument('message', nargs='?', type=str, help='the text of the message')
-	input_group.add_argument('-in', type=str, dest='in_file', metavar='FILE', help='a file containing the message')
-	parser.add_argument('-horiz', type=str, required=True, help='the horizontal (additive) keyword')
-	parser.add_argument('-vert', type=str, required=True, help='the vertical (multiplicative) keyword')
+	input_group.add_argument('-i', '--input', type=str, dest='in_file', metavar='FILE', help='a file containing the message')
+	parser.add_argument('-z', '--horizontal', type=str, required=True, metavar='HORIZ', help='the horizontal (additive) keyword')
+	parser.add_argument('-v', '--vertical', type=str, required=True, metavar='VERT', help='the vertical (multiplicative) keyword')
 	mode_group = parser.add_mutually_exclusive_group()
 	mode_group.add_argument('-e', '--encrypt', action='store_true', help='encrypt mode')
 	mode_group.add_argument('-d', '--decrypt', action='store_true', help='decrypt mode')
-	parser.add_argument('-out', type=str, dest='out_file', metavar='FILE', help='destination for output')
+	parser.add_argument('-o', '--output', type=str, dest='out_file', metavar='FILE', help='destination for output')
 	args = parser.parse_args()
 	
 	if args.message is not None:
@@ -78,13 +79,15 @@ if __name__ == '__main__':
 			message = f.read()
 	
 	if args.encrypt:
-		is_encrypt = True
+		mode = encrypt
 	elif args.decrypt:
-		is_encrypt = False
+		mode = decrypt
+	elif probe_text(message):
+		mode = encrypt
 	else:
-		is_encrypt = probe_text(message)
+		mode = decrypt
 
-	result = greenwall(message, args.horiz, args.vert, is_encrypt)
+	result = mode(message, args.horizontal, args.vertical)
 
 	if args.out_file is not None:
 		with open(args.out_file, 'w') as f:
