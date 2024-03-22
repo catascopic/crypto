@@ -24,7 +24,7 @@ if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser(prog='random',
 		description='Generates random keys for classical ciphers.')
-	parser.add_argument('-alpha', metavar='ALPHABET', type=str, default=ALPHA, help='the alphabet of the ke')
+	parser.add_argument('-a', '--alpha', metavar='ALPHABET', type=str, default=ALPHA, help='the alphabet of the key')
 	parser.add_argument('length', type=int, help='the length of the key')
 	parser.add_argument('out_file', type=str, nargs='?', metavar='out_file', help='destination for output')
 	args = parser.parse_args()

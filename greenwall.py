@@ -1,96 +1,68 @@
 import itertools
+from string import ascii_uppercase
+from crypto import chunks, join_result, create_trans, acode as base_acode, OFFSET_UPPER
 
 
 MULT_INV = [None] + [pow(i, -1, 29) for i in range(1, 29)]
-ORD_A = ord('A')
 PUNCT = ' ,.'
+ALPHA = ascii_uppercase + PUNCT
 punct_codes = {c: i for i, c in enumerate(PUNCT, start=26)}
 
-def chunks(list_, n):
-	for i in range(0, len(list_), n):
-		yield list_[i:i + n]
 
-def to_code(c):
-	x = ord(c.upper()) - ORD_A
-	return x if 0 <= x <= 25 else punct_codes[c]
+def acode(c):
+	# could be improved with full ascii lookup table
+	# as is, we start with a map lookup that misses most of the time
+	if a := punct_codes.get(c):
+		return a
+	return base_acode(c)
 
-def to_code_list(s, start=0):
-	return [to_code(c) + start for c in s]
+def acodes(s, start=0):
+	return [acode(c) + start for c in s]
 
-def to_char(x):
-	return chr(x + ORD_A) if x < 26 else PUNCT[x - 26]
+def enc_func(a, h, v, b):
+	return ((b * a + h) * v) % 29
 
-def apply_enc(x, h, v, b):
-	return ((b * x + h) * v) % 29
-
-def apply_dec(x, h, v, b):
-	return ((MULT_INV[v] * x - h) * MULT_INV[b]) % 29
+def dec_func(a, h, v, b):
+	return ((MULT_INV[v] * a - h) * MULT_INV[b]) % 29
 
 
-def stream(code, horiz, vert, mode):
+@join_result
+def greenwall(message, key_horiz, key_vert, func):
+	horiz = acodes(key_horiz)
+	vert = acodes(key_vert, 1)
+	code = acodes(message)
 	for block_num, chunk in enumerate(chunks(code, len(horiz) * len(vert))):
-		for i, (v, h) in zip(chunk, itertools.product(vert, horiz)):
-			yield mode(i, h, v, block_num % 28 + 1)
-
-
-def greenwall(message, key_horiz, key_vert, mode):
-	horiz = to_code_list(key_horiz)
-	vert = to_code_list(key_vert, 1)
-	code = to_code_list(message)	
-	result = ''.join(to_char(i) for i in stream(code, horiz, vert, mode))
-	return result
+		for a, (v, h) in zip(chunk, itertools.product(vert, horiz)):
+			# use variable offset rather than explicit .lower()?
+			yield ALPHA[func(a, h, v, block_num % 28 + 1)]
 
 
 def encrypt(message, key_horiz, key_vert):
-	return greenwall(message, key_horiz, key_vert, apply_enc)
+	return greenwall(message, key_horiz, key_vert, enc_func)
 
 def decrypt(message, key_horiz, key_vert):
-	return greenwall(message, key_horiz, key_vert, apply_dec).lower()
+	return greenwall(message, key_horiz, key_vert, dec_func).lower()
 
 
 if __name__ == '__main__':
 	import argparse
-	
-	def probe_text(s):
-		for c in s:
-			if c.isalpha():
-				return c.islower()
-		return True
+	import cryptoargs
 	
 	parser = argparse.ArgumentParser(
 		prog='greenwall',
-		description='Applies the world-famous Greenwall Cipher to a message.',
+		description='Applies the world-famous Greenwall Cipher to a message. ' + cryptoargs.MODE_INSTRUCTIONS,
 		epilog='Algorithm by Max Koren and Oliver Hammond.')
-	input_group = parser.add_mutually_exclusive_group(required=True)
-	input_group.add_argument('message', nargs='?', type=str, help='the text of the message')
-	input_group.add_argument('-i', '--input', type=str, dest='in_file', metavar='FILE', help='a file containing the message')
+	cryptoargs.add_input(parser)
 	parser.add_argument('-z', '--horizontal', type=str, required=True, metavar='HORIZ', help='the horizontal (additive) keyword')
-	parser.add_argument('-v', '--vertical', type=str, required=True, metavar='VERT', help='the vertical (multiplicative) keyword')
-	mode_group = parser.add_mutually_exclusive_group()
-	mode_group.add_argument('-e', '--encrypt', action='store_true', help='encrypt mode')
-	mode_group.add_argument('-d', '--decrypt', action='store_true', help='decrypt mode')
-	parser.add_argument('-o', '--output', type=str, dest='out_file', metavar='FILE', help='destination for output')
+	parser.add_argument('-v', '--vertical',   type=str, required=True, metavar='VERT',  help='the vertical (multiplicative) keyword')
+	cryptoargs.add_mode(parser)
+	cryptoargs.add_output(parser)
 	args = parser.parse_args()
-	
-	if args.message is not None:
-		message = args.message
-	else:
-		with open(args.in_file) as f:
-			message = f.read()
-	
-	if args.encrypt:
-		mode = encrypt
-	elif args.decrypt:
-		mode = decrypt
-	elif probe_text(message):
-		mode = encrypt
-	else:
-		mode = decrypt
 
-	result = mode(message, args.horizontal, args.vertical)
+	trans = create_trans(' ,.')
+	message = cryptoargs.get_input(args).translate(trans)
+	mode = cryptoargs.get_mode(args, encrypt, decrypt)
+	if mode is None:
+		mode = encrypt if cryptoargs.probe_text(message) else decrypt
 
-	if args.out_file is not None:
-		with open(args.out_file, 'w') as f:
-			f.write(result)
-	else:
-		print(result)
+	cryptoargs.write_result(args, mode(message, args.horizontal, args.vertical))
